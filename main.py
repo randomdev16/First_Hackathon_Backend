@@ -6,6 +6,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from typing import Any, Dict
 from datetime import datetime
 import json
+import time
+from sqlalchemy.exc import OperationalError
 
 DATABASE_URL = "sqlite:///./users.db"
 
@@ -95,6 +97,31 @@ def get_db():
     finally:
         db.close()
 
+
+def safe_commit(db: Session, retries: int = 3, backoff: float = 0.1):
+    """
+    Commit with retries on transient OperationalError. Rolls back on exceptions
+    to leave the session in a usable state.
+    """
+    for attempt in range(retries):
+        try:
+            db.commit()
+            return
+        except OperationalError:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            if attempt + 1 == retries:
+                raise
+            time.sleep(backoff * (2 ** attempt))
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise
+
 def summarize_users(db: Session):
     users = db.query(User).all()
     counts = {
@@ -131,7 +158,7 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="User gng exists")
     new_user = User(phone_number=user.phone_number, password=user.password, user_name=user.user_name)
     db.add(new_user)
-    db.commit()
+    safe_commit(db)
     db.refresh(new_user)
     return {"status": "frz", "message": "User register"}
 
@@ -174,7 +201,7 @@ def form_enter(form_data: GenericFormFill, db: Session = Depends(get_db)):
     user.form_type = form_data.form_type
     user.enter_date_and_time = form_data.enter_date_and_time
     user.form_data = json.dumps(store)
-    db.commit()
+    safe_commit(db)
     db.refresh(user)
     return {"status": "form_saved", "message": "Form stored (appended)", "user_id": user.id}
 
@@ -250,7 +277,7 @@ def admin_action(data: AdminAction, xkey: str = Header(...), db: Session = Depen
         raise HTTPException(status_code=400, detail="Invalid action")
     user.last_action_done = data.last_action_done
     user.next_step = data.next_step
-    db.commit()
+    safe_commit(db)
     db.refresh(user)
     return {
         "status": "success",
@@ -286,7 +313,7 @@ def higher_official_action(data: HigherOfficialAction, xkey: str = Header(...), 
         user.cancelled_status = True
         user.cancelled_desc = "Cancelled by higher official"
 
-    db.commit()
+    safe_commit(db)
     db.refresh(user)
 
     return {
@@ -332,7 +359,7 @@ def super_official_action(data: SuperOfficialAction, xkey: str = Header(...), db
             user.cancelled_status = True
             user.cancelled_desc = data.reason
 
-    db.commit()
+    safe_commit(db)
     db.refresh(user)
 
     return {
