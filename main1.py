@@ -219,10 +219,9 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
         }
  
     # Check regular users in database
-    db_user = db.query(User).filter(User.phone_number == verify_password(user.phone_number)).first()
-    if not db_user or db_user.password != user.password:
+    db_user = db.query(User).filter(User.phone_number == user.phone_number).first()
+    if not db_user or not verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
- 
     return {"status": "gud", "user": {"phone_number": db_user.phone_number}}
  
 @app.post("/dashboard/user/form")
