@@ -1,2 +1,2 @@
 # FirstoHackathon
-frz
+Backend project
