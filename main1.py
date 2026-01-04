@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -10,17 +9,15 @@ import json
 import codecs
 import bcrypt
  
-# ---------- Configuration ----------
+
 DATABASE_URL = "sqlite:///./users.db"
  
 engine = create_engine(
     DATABASE_URL, connect_args={"check_same_thread": False}
 )
-# sessionmaker defaults are fine; explicitly set expire_on_commit=False so returned objects keep values after commit
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 Base = declarative_base()
  
-# ---------- Models ----------
 class User(Base):
     __tablename__ = "users_stuff"
  
@@ -36,7 +33,7 @@ class Form(Base):
     user_id = Column(Integer, ForeignKey("users_stuff.id"), index=True)
     form_type = Column(String, default=None)
     enter_date_and_time = Column(String, default=None)
-    form_data = Column(Text, default=None)   # stored as JSON string or None
+    form_data = Column(Text, default=None)
     saved_at = Column(String, default=None)
  
     status_admin = Column(Boolean, default=False)
@@ -54,10 +51,8 @@ class Form(Base):
     last_action_done = Column(String, default=None)
     next_step = Column(String, default=None)
  
-# Create tables
 Base.metadata.create_all(bind=engine)
  
-# ---------- Pydantic Schemas ----------
 class UserCreate(BaseModel):
     user_name: str = Field(..., min_length=1, max_length=30)
     phone_number: str
@@ -83,7 +78,7 @@ class AdminAction(BaseModel):
 class HigherOfficialAction(BaseModel):
     form_id: int
     last_action_done: Optional[str] = None
-    status: str  # "finalized" or "cancelled"
+    status: str
     next_step: Optional[str] = None
  
 class SuperOfficialAction(BaseModel):
@@ -93,18 +88,16 @@ class SuperOfficialAction(BaseModel):
     next_step: Optional[str] = None
     reason: Optional[str] = None
  
-# ---------- App init ----------
 app = FastAPI()
  
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # in production, lock this down
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
  
-# ---------- Dependency ----------
 def get_db():
     db = SessionLocal()
     try:
@@ -112,9 +105,7 @@ def get_db():
     finally:
         db.close()
  
-# ---------- Helpers ----------
 def safe_parse_json(text: Optional[str]):
-    """Safely parse JSON text stored in DB; return Python object or original string if parse fails."""
     if not text:
         return None
     try:
@@ -123,7 +114,6 @@ def safe_parse_json(text: Optional[str]):
         return text
  
 def form_to_dict(f: Form) -> Dict[str, Any]:
-    """Normalize the form representation returned to frontend (use snake_case keys expected by frontend)."""
     return {
         "form_id": f.id,
         "form_type": f.form_type,
@@ -140,7 +130,6 @@ def form_to_dict(f: Form) -> Dict[str, Any]:
         "cancelled_desc": f.cancelled_desc,
         "last_action_done": f.last_action_done,
         "next_step": f.next_step,
-        # also include legacy camelCase names so frontend defensive checks still work
         "statusAdmin": f.status_admin,
         "statusHigherOfficial": f.status_higher_official,
         "statusSuperOfficial": f.status_super_official,
@@ -169,7 +158,6 @@ def summarize_users(db: Session):
             parsed = safe_parse_json(f.form_data)
             forms_list.append(form_to_dict(f))
  
-            # Count each form separately
             if f.cancelled_status:
                 cancelled += 1
             elif f.status_admin and f.status_higher_official and f.status_super_official:
@@ -187,7 +175,6 @@ def summarize_users(db: Session):
     counts = {"pending": pending, "approved": approved, "cancelled": cancelled}
     return {"counts": counts, "all_users": all_users}
  
-# ---------- Routes ----------
 @app.post("/register")
 def register(user: UserCreate, db: Session = Depends(get_db)):
     exist_user = db.query(User).filter(User.phone_number == user.phone_number).first()
@@ -201,7 +188,6 @@ def register(user: UserCreate, db: Session = Depends(get_db)):
  
 @app.post("/login")
 def login(user: UserLogin, db: Session = Depends(get_db)):
-    # Admin credentials (hard-coded for testing). Fixed typos and consistent phone_number returned.
     if user.phone_number == "@admin.com" and user.password == "adminpass":
         return {
             "status": "gud",
@@ -218,7 +204,6 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
             "user": {"phone_number": "@supadmin.com", "secretkey": "m"}
         }
  
-    # Check regular users in database
     db_user = db.query(User).filter(User.phone_number == user.phone_number).first()
     if not db_user or not verify_password(user.password, db_user.password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -253,7 +238,6 @@ def get_user_status(phno: str, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
  
-    # Get ALL forms for this user
     forms = db.query(Form).filter(Form.user_id == user.id).order_by(Form.id).all()
  
     forms_list = [form_to_dict(form) for form in forms]
@@ -264,7 +248,6 @@ def get_user_status(phno: str, db: Session = Depends(get_db)):
         "forms": forms_list
     }
  
-# New endpoint: fetch a single form by id (useful for Details page on refresh / deep link)
 @app.get("/dashboard/form/{form_id}")
 def get_form(form_id: int, db: Session = Depends(get_db)):
     form = db.query(Form).filter(Form.id == form_id).first()
@@ -344,7 +327,6 @@ def higher_official_action(data: HigherOfficialAction, xkey: Optional[str] = Hea
     if not form:
         raise HTTPException(status_code=404, detail="Form not found")
  
-    # Accept optional last_action_done (frontend may include cancellation reason there)
     if data.last_action_done:
         form.last_action_done = data.last_action_done
     if data.next_step:
@@ -360,7 +342,6 @@ def higher_official_action(data: HigherOfficialAction, xkey: Optional[str] = Hea
         form.status_higher_official = False
         form.higher_official_date = datetime.utcnow().isoformat()
         form.cancelled_status = True
-        # If frontend provided an explicit reason field in last_action_done, use it; otherwise store the message
         form.cancelled_desc = data.last_action_done or "Cancelled by higher official"
     else:
         raise HTTPException(status_code=400, detail="Status must be 'finalized' or 'cancelled'")
@@ -428,8 +409,6 @@ def super_official_action(data: SuperOfficialAction, xkey: Optional[str] = Heade
         "cancelled_status": form.cancelled_status
     }
 
-    return {"forms_statuses": statuses}
-
 @app.get("/dashboard/super_official")
 def super_official_dashboard(xkey: Optional[str] = Header(None), db: Session = Depends(get_db)):
     if xkey is None:
@@ -438,7 +417,6 @@ def super_official_dashboard(xkey: Optional[str] = Header(None), db: Session = D
         raise HTTPException(status_code=403, detail="Unauthorized")
     return summarize_users(db)
  
-# ---------- Run ----------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
